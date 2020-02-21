@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <string>
+#include "bp.hpp"
 using namespace std;
 
 namespace output{
@@ -12,7 +13,7 @@ namespace output{
 
     /* Do not save the string returned from this function in a data structure 
         as it is not dynamically allocated and will be destroyed(!) at the end of the calling scope.
-    */
+    */ 
     string makeFunctionType(const string& retType, vector<string>& argTypes);
 
     void errorLex(int lineno);
@@ -28,6 +29,9 @@ namespace output{
     void errorUnexpectedContinue(int lineno);
     void errorMainMissing();
     void errorByteTooLarge(int lineno, const string& value);
+    /**
+    void output::printBuffer(CodeBuffer& Buffer)
+    */
 }
 
 #endif
