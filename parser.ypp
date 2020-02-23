@@ -1,0 +1,612 @@
+%{
+  #include <sstream>
+  using namespace std;
+	#include <iostream>
+  #include "bp.hpp"
+	#include <vector>
+	#include <algorithm>
+	#include "scoping.hpp"
+	#include "hw3_output.hpp"
+  #include "Registers.hpp"
+  #include <iostream>
+  #include "SemanticAdd.hpp"
+	/**int yylex();*/
+    extern int yylex();
+	extern int yylineno;
+	void yyerror(const char*); 
+	scopeTables symbol_table;
+	int in_while_scope = 0;
+    Registers Gregisters;
+    CodeBuffer& Buffer = CodeBuffer::instance();
+
+%}
+
+%token VOID
+%token INT
+%token BYTE
+%token B
+%token BOOL
+%token TRUE
+%token FALSE
+%token RETURN
+%nonassoc IF
+%nonassoc ELSE
+%token WHILE
+%token BREAK
+%token CONTINUE
+%token SC
+%token COMMA
+%token LBRACE
+%token RBRACE
+%token ENUM
+%token ID
+%token NUM
+%token STRING
+%token END_OF_FILE
+%right ASSIGN
+%left OR
+%left AND
+%left EQOP
+%nonassoc CMPOP
+%left ADDSUBOP
+%left MULDIVOP
+%right LPAREN RPAREN
+%right NOT
+
+
+%%
+Program: mainM Enums Funcs END_OF_FILE{
+        scope_Entry * mainEntry = symbol_table.find_func_entry_by_ID("main");
+        if (mainEntry == NULL) {
+            output::errorMainMissing();
+            exit(1);
+        }
+        if (mainEntry->ret_Type != "VOID" || mainEntry->args_Types.size() != 0){
+            output::errorMainMissing();
+            exit(1);
+        }
+        output::endScope();
+        symbol_table.close_Scope();
+       /** std::cout << "************* PRINT BUFFER AT EXSITING ***********"
+        <<std::endl;
+        Buffer.printCodeBuffer();
+        std::cout << "********************************"
+        <<std::endl;*/
+        Buffer.printCodeBuffer();
+        exit(0);
+}
+mainM:  {
+        symbol_table.openScope();
+        symbol_table.insert_Entry("print", "VOID", IS_FUNC);
+        scope_Entry* print = symbol_table.find_entry_by_ID("print",IS_FUNC);
+        print->addArgType("STRING");
+        symbol_table.insert_Entry("printi", "VOID", IS_FUNC);
+        scope_Entry* printi = symbol_table.find_entry_by_ID("printi",IS_FUNC);
+        printi->addArgType("INT");
+        }
+
+Funcs: /* Epsilon */
+;
+Funcs: FuncDecl Funcs
+;
+FuncDecl: RetType ID LPAREN {
+                               if(symbol_table.check_entry_exists($2->id)){
+                              output::errorDef(yylineno, $2->id);
+                               exit(1);
+                              }
+                              symbol_table.insert_Entry($2->id, $1->type, IS_FUNC);
+                              symbol_table.openScope();
+                            } Formals RPAREN {
+                                FunctionHandler1(Gregisters,Buffer);
+                            } LBRACE Statements RBRACE {
+                             output::endScope();
+                             symbol_table.close_Scope();
+                        }
+;
+Enums: /* Epsilon */
+;
+Enums: EnumDecl Enums /* @@@@ DONE @@@@ */
+;
+EnumDecl: ENUM ID LBRACE EnumeratorList RBRACE SC { if(symbol_table.check_entry_exists($2->id)){
+                                output::errorDef(yylineno, $2->id);
+                                      exit(1);
+                                }
+                                symbol_table.insert_enum_entry($2->id,$1->type,((EnumValList*)$4));
+                                delete($4);
+
+                      }
+;
+RetType: Type { $$ = $1;} /* @@@@ DONE @@@@ */
+;
+RetType: VOID { $$ = $1; }
+;
+Formals: /* Epsilon */
+;
+Formals: FormalsList /* @@@@ DONE @@@@ */
+;
+FormalsList: FormalDecl /* @@@@ DONE @@@@ */
+;
+FormalsList: FormalDecl COMMA FormalsList /* @@@@ DONE @@@@ */
+;
+FormalDecl: Type ID { if(symbol_table.check_entry_exists($2->id)){
+                          output::errorDef(yylineno, $2->id);
+                          exit(1);
+                        }
+                        symbol_table.insert_Entry($2->id, $1->type,IS_PARAM);
+                    }
+;
+FormalDecl: EnumType ID { if(!symbol_table.find_enum_entry_by_ID($1->id)){
+                            				   	output::errorUndefEnum(yylineno,$1->id);
+                            				   	exit(1);
+                            				   	}
+                            				   	if(symbol_table.check_entry_exists($2->id)){
+
+                              			   	     output::errorDef(yylineno,($2)->id);
+                              				     exit(1);
+                            					}
+                                        symbol_table.insert_enumPar_Entry($2->id, $1->type, $1->id);
+                                        }
+;
+EnumeratorList: Enumerator {$$ = new EnumValList();
+                              ((EnumValList*)$$)->enumval_Nodes.push_back($1);}
+;
+EnumeratorList: EnumeratorList COMMA Enumerator { $$ = $1;
+                                                 int flag = ((EnumValList*)$$)->checkAlreadyExists(($3)->id);
+                                                 if(flag == 0){
+                                                 ((EnumValList*)$$)->enumval_Nodes.push_back($3);
+                                                 }
+                                                 else{
+                                                 output::errorDef(yylineno,($3)->id);
+                                                 exit(1);
+                                                 }
+                                                 }
+;
+Enumerator: ID { if(symbol_table.check_entry_exists($1->id)){
+                     			output::errorDef(yylineno,$1->id);
+                     			exit(1);
+                   				}
+                   				$1->type = "ENUM_VAL";
+                   				symbol_table.insert_Entry($1->id,$1->type,IS_ENUM_VAL);
+                   				$$ = $1;
+                   				}
+
+
+;
+Statements: Statement {
+check(160,Buffer); /** we already have the undifend value at this point */
+$$=StatmentHandler1($1,Gregisters,Buffer);
+/**cout << "************* getting out of Statements: Statement ***********" <<
+endl;*/
+
+/// delete($1);
+}
+;
+
+;
+Statements : Statements M Statement {
+    $$=StatmentHandler11($1,$3,$2,Gregisters,Buffer);
+ /**   cout << "*********** getting out of  Statements : Statements Statement"
+ <<endl;*/
+     /// delete($1);
+     ///   delete($2);
+     ///   delete($2);
+    /// delete($3);
+}
+
+;
+Statement: LBRACE {
+    symbol_table.openScope();}
+    Statements RBRACE {
+    $$=$2;
+    output::endScope();
+    symbol_table.close_Scope();
+    }
+
+;
+Statement: Type ID SC {
+if(symbol_table.check_entry_exists($2->id)){
+    output::errorDef(yylineno, $2->id);
+    exit(1);
+    }
+    $$=DeclareID($1,$2,Gregisters,Buffer,symbol_table);
+
+}
+;
+Statement: EnumType ID SC { if(symbol_table.check_entry_exists($2->id)){
+                           output::errorDef(yylineno, $2->id);
+                           exit(1);
+                          }
+                           if(!symbol_table.find_enum_entry_by_ID($1->id)){
+                             	output::errorUndefEnum(yylineno,$1->id);
+                               	exit(1);
+                              	}
+
+                              symbol_table.insert_enumVar_Entry($2->id, $1->type, $1->id);
+                      }
+;
+Statement: EnumDecl /* @@@@ DONE @@@@ */
+;
+Statement: Type ID ASSIGN Exp SC {
+    if(symbol_table.check_entry_exists($2->id)){
+        output::errorDef(yylineno, $2->id);
+        exit(1);
+    }
+    if($1->type != $4->type && !($1->type == "INT" && $4->type == "BYTE")){
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    symbol_table.insert_Entry($2->id, $1->type, IS_VAR);
+    $$=StatmentHandler3($2,$4,Gregisters,Buffer,symbol_table);
+   /** cout << "************* getting out of  Statement: Type ID ASSIGN Exp
+    SC  ***********" << endl;*/
+}
+;
+Statement: EnumType ID ASSIGN Exp SC {
+                         if(symbol_table.check_entry_exists($2->id)){
+                                output::errorDef(yylineno, $2->id);
+                               exit(1);
+                               }
+                        if(!symbol_table.find_enum_entry_by_ID($1->id)){
+                             	output::errorUndefEnum(yylineno,$1->id);
+                              	exit(1);
+           	            }
+           	            string s = symbol_table.getEnumAndIdType($1->id);
+           	            if(($4->type == "ENUM_VAL")){
+           	             if(!(symbol_table.find_enum_entry_by_ID($1->id)->checkLegalVal($4->id))){
+           	                output::errorUndefEnumValue(yylineno, $2->id);
+           	                 exit(1);
+           	            }
+           	            }
+           	            else {
+           	            if($4->type != s){
+           	                output::errorUndefEnumValue(yylineno, $2->id);
+                             exit(1);
+           	            }
+           	            }
+           	           symbol_table.insert_enumVar_Entry($2->id, $1->type, $1->id);
+           	           delete($2);
+
+   /** cout << "************* getting out of  Statement: Type ID ASSIGN Exp SC "
+             " ***********" << endl;*/
+
+}
+;
+Statement: ID ASSIGN Exp SC{
+        scope_Entry * entry = symbol_table.return_entry_ptr($1->id);
+        if (!entry){
+            output::errorUndef(yylineno, $1->id);
+            exit(1);
+        }
+        if ((entry->enum_type!="") && entry->et == IS_ENUM_VAR){
+            scope_Entry *the_enum = symbol_table.find_enum_entry_by_ID(
+                    entry->enum_type);
+            if (!(the_enum->checkLegalVal($3->id))) {
+
+                output::errorUndefEnumValue(yylineno, $1->id);
+                exit(1);
+            }
+        }else
+        if (entry->type != $3->type && !(entry->type == "INT" && $3->type == "BYTE")){
+            output::errorMismatch(yylineno);
+            exit(1);
+        }
+        if (entry->et == IS_FUNC){
+            output::errorUndef(yylineno, $1->id);
+            exit(1);
+        }
+        $$=AssignHandel1();
+        delete($1);
+}
+;
+Statement: Call SC {}
+;
+Statement: RETURN SC{   string ret_type = symbol_table.get_last_inserted_func_retType();
+                    			                                                     if(ret_type != "VOID"){
+                    			                                                         output::errorMismatch(yylineno);
+                                                                                         exit(1);
+                    			                                                     }
+                    			                                                    }
+;
+Statement: RETURN Exp SC {string ret_type = symbol_table.get_last_inserted_func_retType();
+                                                                                          if(ret_type == "VOID" || (ret_type != $2->type && !(ret_type == "INT" && $2->type == "BYTE"))){
+                                                                                             output::errorMismatch(yylineno);
+                                                                                             exit(1);
+                                                                                          }
+                                                                                         }
+;
+
+Statement: WHILE LPAREN Exp RPAREN{
+    if ($3->type != "BOOL"){
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    symbol_table.openScope();
+    in_while_scope = 1;
+} Statement {output::endScope(); symbol_table.close_Scope();in_while_scope=0;}
+;
+Statement: BREAK SC {if(in_while_scope == 0){
+                         output::errorUnexpectedBreak(yylineno);
+                            exit(1);
+                       }}
+;
+Statement : CONTINUE SC {if(in_while_scope == 0){
+                           output::errorUnexpectedContinue(yylineno);
+                                 	exit(1);
+                        }}
+;
+ELSEM :   ELSE {
+            $$=ElseM(Gregisters,Buffer);
+}
+;
+Statement: MIFSTART Statement MIFEND ELSEM { /** TODO: delete of the
+ * regular markering (N marking) - NOT doing this thing will NOT change the
+ * functionallity  */
+    symbol_table.openScope();
+    }
+  Statement {output::endScope();symbol_table.close_Scope();} {
+    $$=IfElseStatment($1,$4,$3,$2,$5,Gregisters,Buffer);
+  /**  cout << "*********** getting out of  Statement: MIFSTART Statement "
+             "MIFEND ELSEM ";*/
+}
+;
+
+Statement: MIFSTART Statement %prec IF MIFEND {
+     $$=If5($1,$2,Gregisters,Buffer);
+   /** cout << "*********** getting out of  Statement: MIFSTART %prec IF "
+            "MIFEND"<<endl;*/
+}
+;
+MIFEND :  {
+    output::endScope();
+    symbol_table.close_Scope();
+}
+;
+MIFSTART : IF LPAREN Exp RPAREN M {
+        check(7,Buffer);
+        if ($3->type != "BOOL"){
+            output::errorMismatch(yylineno);
+            exit(1);
+        }
+        $$=If1($3,$5);
+        check(20,Buffer);
+
+        symbol_table.openScope();
+    /**   cout << "*********** getting out of  MIFSTART : IF LPAREN Exp
+     * RPAREN M"
+               " Statement"<<endl;*/
+}
+
+;
+Call : ID LPAREN ExpList RPAREN{
+        scope_Entry * funcEntry = symbol_table.find_entry_by_ID($1->id,
+                                                                IS_FUNC);
+        if (funcEntry == NULL){
+            output::errorUndefFunc(yylineno, $1->id);
+            exit(1);
+        }
+        if (funcEntry->args_Types.size() != ((ExpList*)$3)->exp_Nodes.size()){
+
+            output::errorPrototypeMismatch(yylineno, $1->id,
+                                           (funcEntry->args_Types));
+            exit(1);
+        }
+        std::reverse((((ExpList*)$3)->exp_Nodes).begin(), (((ExpList*)$3)->exp_Nodes).end());
+        for (int i = 0; i < funcEntry->args_Types.size(); i++){
+            if ((((funcEntry->args_Types))[i] !=
+                 (((ExpList *) $3)->exp_Nodes)[i]->type) &&
+                !(((funcEntry->args_Types))[i] == "INT" &&
+                  (((ExpList *) $3)->exp_Nodes)[i]->type == "BYTE")) {
+
+                output::errorPrototypeMismatch(yylineno, $1->id,
+                                               (funcEntry->args_Types));
+                exit(1);
+            }
+        }
+        $$ = new Node("", funcEntry->ret_Type);
+        delete($1);
+}
+;
+Call: ID LPAREN RPAREN {
+    scope_Entry* funcEntry = symbol_table.find_func_entry_by_ID($1->id);
+                                                                if(funcEntry == NULL){
+                                                                       output::errorUndefFunc(yylineno, $1->id);
+                                                                       exit(1);
+                                                                }
+                                                                if(funcEntry->args_Types.size() != 0){
+                       												output::errorPrototypeMismatch(yylineno, $1->id, (funcEntry->args_Types));
+                       												exit(1);}
+                       										 $$ = new Node("", funcEntry->ret_Type);
+                       										 delete($1);
+                       										 }
+;
+ExpList: Exp {$$ = new ExpList();
+               ((ExpList*)$$)->exp_Nodes.push_back($1);}
+;
+ExpList: Exp COMMA ExpList {$$ = $3;
+                            ((ExpList*)$$)->exp_Nodes.push_back($1);}
+;
+Type :		INT							{$$ = $1;}
+			| BYTE						{$$ = $1;}
+			| BOOL						{$$ = $1;}
+;
+EnumType: ENUM ID {
+                      $2->type = "ENUM";
+                      $$ = $2;
+                 }
+;
+Exp: LPAREN Exp RPAREN {$$ = $2;}
+;
+
+Exp: ID {
+                               scope_Entry* rc0 = symbol_table.find_entry_by_ID($1->id, IS_VAR);
+                               	 scope_Entry* rc1 = symbol_table.find_entry_by_ID($1->id, IS_PARAM);
+                               	 scope_Entry* rc2 = symbol_table.find_entry_by_ID($1->id,IS_ENUM_VAR);
+                               	 scope_Entry* rc3 = symbol_table.find_entry_by_ID($1->id,IS_ENUM_PARAM);
+                               	 scope_Entry* rc4 = symbol_table.find_entry_by_ID($1->id,IS_ENUM_VAL);
+
+                               	 if(rc0 == NULL && rc1 == NULL && rc2==NULL && rc3==NULL && rc4==NULL){
+                               		 output::errorUndef(yylineno, $1->id);
+                                     exit(1);
+                                 }
+                                           if(rc0 != NULL){
+
+                                   $1->type = rc0->type;
+                                  } else {
+                                  if(rc1!=NULL){
+                                    $1->type = rc1->type;
+                                    }
+                                    else if(rc2!=NULL){
+                                    $1->type = rc2->type;
+                                    }
+                                    else if(rc3!=NULL) {$1->type = rc3->type; }
+                                    else $1->type = rc4->type;
+
+                     }
+                                  $$ = $1;
+
+              }
+;
+Exp: Call {$$ = $1;}
+;
+Exp: NUM { /** DONE */
+          $1->type="INT"; $$ = expToNum($1,Gregisters,Buffer,false);
+
+         }
+;
+Exp: NUM B{ /** DONE */
+        ((Num *) $1)->move_to_byte(); $$ = expToNum($1, Gregisters, Buffer, true);
+}
+;
+Exp: STRING {$$ = $1;}
+;
+Exp: TRUE { /** DONE */
+    $$ = ExptoTrue(Gregisters,Buffer);
+    delete($1);
+}
+;
+Exp: FALSE {  /** DONE */
+    $$ = ExptoFalse(Gregisters, Buffer);
+    delete($1);
+}
+;
+
+/****************************************************************************************************************************/
+/** arthmetic opreationes */
+
+Exp: Exp ADDSUBOP Exp {  /** DONE */
+   if(($1->type != "INT" && $1->type != "BYTE") || ($3->type != "INT" &&
+        $3->type != "BYTE")){
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    if($1->type == "INT" || $3->type == "INT"){
+        $$ = new Num("");// no need to update the value it`s all in the
+        // register
+    }else {
+        $$ = new Num("");
+    }
+    $$=expArthExp($$,$1,$2,$3,Gregisters,Buffer);
+    delete($1);
+    delete($3);
+}
+;
+Exp: Exp MULDIVOP Exp { /** DONE */
+    if(($1->type != "INT" && $1->type != "BYTE") || ($3->type != "INT" && $3->type != "BYTE")){
+        output::errorMismatch(yylineno);
+        exit(1);}
+    if($1->type == "INT" || $3->type == "INT"){
+        $$ = new Num("");
+    } else {
+     $$ = new Num("");
+    }
+    $$ = expArthExp($$, $1, $2, $3, Gregisters, Buffer);
+    delete($1);
+    delete($3);
+}
+;
+
+/******************************************************************************/
+
+Exp: NOT Exp{    /** DONE */
+    if ($2->type != "BOOL"){
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    $$ = ExpNotExp($1,Gregisters,Buffer);
+    delete($1);
+}
+;
+Exp: Exp AND M Exp {    /** DONE */
+    if($1->type != "BOOL" || $3->type != "BOOL"){
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    $$ = ExpAndExp($1,$3,$4,Gregisters,Buffer);
+    delete($4);
+    delete($1);
+}
+;
+
+Exp: Exp OR M Exp {  /** DONE */
+    if($1->type != "BOOL" || $3->type != "BOOL"){
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    $$ = ExpOrExp($1,$3,$4,Gregisters,Buffer);
+    delete($4);
+    delete($1);
+}
+;
+
+M : {  /** DONE */
+    $$=MarkerHandel(Buffer);
+};
+
+Exp: Exp EQOP Exp {  /** DONE */
+    if(($1->type != "INT" && $1->type != "BYTE") || ($3->type != "INT" && $3->type != "BYTE")){
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    $$ = new Node("", "BOOL");
+    $$ = ExpEQOPExp($$,$1,$2,$3,Gregisters,Buffer);
+    delete($1);
+    delete($3);
+}
+;
+Exp: Exp CMPOP Exp {   /** DONE */
+    if(($1->type != "INT" && $1->type != "BYTE") || ($3->type != "INT" && $3->type != "BYTE")){
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    $$ = new Node("", "BOOL");
+    $$ = ExpEQOPExp($$,$1,$2,$3,Gregisters,Buffer);
+
+    delete($1);
+    delete($3);
+
+}
+;
+Exp: LPAREN Type RPAREN Exp{
+    if (($2->type != "INT") || ( !(symbol_table.find_entry_by_ID($4->id, IS_ENUM_VAR))
+    && !(symbol_table.find_entry_by_ID($4->id, IS_ENUM_VAL))
+    && !(symbol_table.find_entry_by_ID($4->id, IS_ENUM_PARAM)))){
+        output::errorMismatch(yylineno);
+        exit(1);
+    }
+    $$ = $4;
+    $$->type = "INT";
+}
+
+
+;
+
+%%
+
+void yyerror(const char*) {
+    output::errorSyn(yylineno);
+    exit(1);
+}
+int main(){
+    freopen("t0.in","r",stdin);
+    return yyparse();
+}
